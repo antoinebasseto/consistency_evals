@@ -1,0 +1,6 @@
+.vscode
+.streamlit
+__pycache__
+.DS_Store
+config.py
+data/*
