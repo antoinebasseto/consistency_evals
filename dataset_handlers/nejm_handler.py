@@ -135,9 +135,6 @@ Answer using a JSON format.
                 "citations": json_answer["citations"],
             }
             results.append(result)
-            # match = re.search(self.ANSWER_PATTERN_MULTICHOICE, raw_answer)
-            # parsed_answer = match.group(2) if match else None
-            # result["answer"] = parsed_answer
 
         elif self.ai_type == "hypothesis":
             for option in options:
@@ -169,12 +166,6 @@ Answer using a JSON format.
         self, df: pd.DataFrame, file_name: str
     ) -> None:
         results_file_name = file_name.removesuffix(".csv")
-        # answers = df["answer"].apply(lambda x: json.loads(x))
-
-        # lead_diagnoses = answers.apply(lambda x: x["lead_diagnosis"])
-        # lead_diagnoses.value_counts().to_csv(
-        #     os.path.join(self.get_results_dir(), "lead_diagnoses_value_counts.csv")
-        # )
 
         plot_answer_distribution(
             df,
@@ -189,67 +180,22 @@ Answer using a JSON format.
     def _gen_results_for_hypothesis_driven(
         self, df: pd.DataFrame, file_name: str
     ) -> None:
+        df["answer_id"] = df["options"].factorize()[0].astype(str)
         results_file_name = file_name.removesuffix(".csv")
-        answers_dicts = []
-        for answer in df["answer"]:
-            answers_dicts.append(json.loads(answer))
 
-        for option in answers_dicts[0].keys():
-            evidence_for = []
-            evidence_against = []
-
-            for i, answer in enumerate(answers_dicts):
-                for evidence in answer[option]["evidence_for"]:
-                    evidence_for.append(
-                        {
-                            "answer_id": i,
-                            "claim": evidence["claim"],
-                            "citations": evidence["citations"],
-                        }
-                    )
-                for evidence in answer[option]["evidence_against"]:
-                    evidence_against.append(
-                        {
-                            "answer_id": i,
-                            "claim": evidence["claim"],
-                            "citations": evidence["citations"],
-                        }
-                    )
-
-            evidence_for_df = pd.DataFrame(evidence_for)
-            evidence_against_df = pd.DataFrame(evidence_against)
-
-            evidence_for_df.to_csv(
-                os.path.join(
-                    self.get_results_dir(),
-                    f"{results_file_name}_{option}_evidence_for.csv",
-                ),
-                index=False,
-            )
-            evidence_against_df.to_csv(
-                os.path.join(
-                    self.get_results_dir(),
-                    f"{results_file_name}_{option}_evidence_against.csv",
-                ),
-                index=False,
-            )
-
-            plot_text_clusters(
-                evidence_for_df,
-                "claim",
-                os.path.join(
-                    self.get_results_dir(),
-                    f"{results_file_name}_{option}_evidence_for.png",
-                ),
-            )
-            plot_text_clusters(
-                evidence_against_df,
-                "claim",
-                os.path.join(
-                    self.get_results_dir(),
-                    f"{results_file_name}_{option}_evidence_against.png",
-                ),
-            )
+        for option in df['option'].unique():
+            evidence_for = df[(df["option"] == option) & (df["evidence_type"] == "evidence_for")].copy()
+            evidence_against = df[(df["option"] == option) & (df["evidence_type"] == "evidence_against")].copy()
+            for evidence in [evidence_for, evidence_against]:
+                plot_text_clusters(
+                    evidence,
+                    "claim",
+                    "answer_id",
+                    os.path.join(
+                        self.get_results_dir(),
+                        f"{results_file_name}_{option}_{evidence["evidence_type"].iloc[0]}.png",
+                    ),
+                )
 
     def _gen_json_schema_for_recommendation_driven(self) -> object:
         return {
