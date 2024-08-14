@@ -100,6 +100,26 @@ class DatasetHandler:
         json_schema: Optional[object] = None,
     ) -> dict:
         assert (force_json and json_schema) or (not force_json and json_schema is None)
+        if force_json:
+            return {
+                "custom_id": custom_id,
+                "method": "POST",
+                "url": "/v1/chat/completions",
+                "body": {
+                    "model": self.engine,
+                    "messages": [
+                        {"role": "system", "content": self.SYSTEM_PROMPT[self.ai_type]},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": temperature,
+                    "response_format": (
+                        {
+                            "type": "json_schema",
+                            "json_schema": json_schema,
+                        }
+                    ),
+                },
+            }
         return {
             "custom_id": custom_id,
             "method": "POST",
@@ -111,14 +131,6 @@ class DatasetHandler:
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": temperature,
-                "response_format": (
-                    {
-                        "type": "json_schema",
-                        "json_schema": json_schema,
-                    }
-                    if force_json
-                    else {}
-                ),
             },
         }
 

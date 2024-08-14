@@ -89,22 +89,6 @@ Answer the following multiple choice question. The last line of your response sh
             raise NotImplementedError("hypothesis-driven AI is not supported for MMLU")
         super().__init__("mmlu", engine, experiment, ai_type)
 
-    def _load_dataframes(self, subject: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        dev_df = pd.read_csv(
-            os.path.join(self.get_raw_data_dir(), "dev", f"{subject}_dev.csv"),
-            header=None,
-            names=["question", "A", "B", "C", "D", "answer"],
-        )
-        test_df = pd.read_csv(
-            os.path.join(self.get_raw_data_dir(), "test", f"{subject}_test.csv"),
-            header=None,
-            names=["question", "A", "B", "C", "D", "answer"],
-        )
-        return dev_df, test_df
-
-    def _format_subject(self, subject: str) -> str:
-        return " ".join(subject.split("_"))
-
     def gen_batch_inputs(
         self, k_shot: int = 0, max_options_lists: int = -1, temperature: float = 0.0
     ) -> None:
@@ -114,12 +98,12 @@ Answer the following multiple choice question. The last line of your response sh
         for subject in subjects:
             _, test_df = self._load_dataframes(subject)
             input_data = []
+
             for i in range(test_df.shape[0]):
                 original_options = test_df[["A", "B", "C", "D"]].iloc[i].tolist()
                 options_lists = self._gen_experiment_options_lists(
                     original_options, max_options_lists
                 )
-
                 for options in options_lists:
                     prompt = self._gen_prompt(str(test_df.iloc[i, 0]), options)
                     input_data.append(
@@ -138,3 +122,16 @@ Answer the following multiple choice question. The last line of your response sh
                 for entry in input_data:
                     json_line = json.dumps(entry)
                     file.write(json_line + "\n")
+
+    def _load_dataframes(self, subject: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        dev_df = pd.read_csv(
+            os.path.join(self.get_raw_data_dir(), "dev", f"{subject}_dev.csv"),
+            header=None,
+            names=["question", "A", "B", "C", "D", "answer"],
+        )
+        test_df = pd.read_csv(
+            os.path.join(self.get_raw_data_dir(), "test", f"{subject}_test.csv"),
+            header=None,
+            names=["question", "A", "B", "C", "D", "answer"],
+        )
+        return dev_df, test_df
