@@ -28,7 +28,7 @@ def main(args: argparse.Namespace):
                 data = dataset_handler.parse_batch_output_line(line)
                 batch_output.extend(data)
 
-        parsed_file_name += f"_{output_file_name.removesuffix(".jsonl")}.csv"
+        parsed_file_name += f"_{output_file_name.removesuffix('.jsonl')}.csv"
         pd.DataFrame(batch_output).to_csv(
             os.path.join(parsed_outputs_dir, parsed_file_name), index=False
         )

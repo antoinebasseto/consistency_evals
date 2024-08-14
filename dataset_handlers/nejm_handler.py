@@ -169,17 +169,17 @@ Answer using a JSON format.
         self, df: pd.DataFrame, file_name: str
     ) -> None:
         results_file_name = file_name.removesuffix(".csv")
-        answers = df["answer"].apply(lambda x: json.loads(x))
+        # answers = df["answer"].apply(lambda x: json.loads(x))
 
-        lead_diagnoses = answers.apply(lambda x: x["lead_diagnosis"])
-        lead_diagnoses.value_counts().to_csv(
-            os.path.join(self.get_results_dir(), "lead_diagnoses_value_counts.csv")
-        )
+        # lead_diagnoses = answers.apply(lambda x: x["lead_diagnosis"])
+        # lead_diagnoses.value_counts().to_csv(
+        #     os.path.join(self.get_results_dir(), "lead_diagnoses_value_counts.csv")
+        # )
 
         plot_answer_distribution(
             df,
             ast.literal_eval(df["options"].iloc[0]),
-            "lead_diagnosis",
+            "answer",
             os.path.join(
                 self.get_results_dir(),
                 f"{results_file_name}_answer_distribution.png",
