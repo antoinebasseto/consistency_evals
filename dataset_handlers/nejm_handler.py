@@ -74,7 +74,7 @@ Answer using a JSON format.
         super().__init__("nejm", engine, experiment, ai_type)
 
     def gen_batch_inputs(
-        self, k_shot: int = 0, max_options_lists: int = -1, temperature: int = 0
+        self, k_shot: int = 0, max_options_lists: int = -1, temperature: float = 0.0
     ) -> None:
         if k_shot != 0:
             raise NotImplementedError("k-shot learning is not supported for NEJM")

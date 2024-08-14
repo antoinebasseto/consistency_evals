@@ -72,78 +72,62 @@ choices = ["A", "B", "C", "D"]
 
 
 class MMLUHandler(DatasetHandler):
-    SYSTEM_PROMPT = "You are a helpful assistant."
-    MESSAGE_PROMPT_START = ""
+    SYSTEM_PROMPT = {
+        "recommendation": "You are a helpful assistant.",
+        "hypothesis": "",
+    }
+    MESSAGE_PROMPT_START = {
+        "recommendation": """
+Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.
+""".strip(),
+        "hypothesis": "",
+    }
     ANSWER_PATTERN_MULTICHOICE = r""
 
-    def __init__(self, engine: str, experiment: str) -> None:
-        super().__init__("mmlu", engine, experiment)
+    def __init__(self, engine: str, experiment: str, ai_type: str) -> None:
+        if ai_type == "hypothesis":
+            raise NotImplementedError("hypothesis-driven AI is not supported for MMLU")
+        super().__init__("mmlu", engine, experiment, ai_type)
 
     def _load_dataframes(self, subject: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         dev_df = pd.read_csv(
             os.path.join(self.get_raw_data_dir(), "dev", f"{subject}_dev.csv"),
             header=None,
+            names=["question", "A", "B", "C", "D", "answer"],
         )
         test_df = pd.read_csv(
             os.path.join(self.get_raw_data_dir(), "test", f"{subject}_test.csv"),
             header=None,
+            names=["question", "A", "B", "C", "D", "answer"],
         )
         return dev_df, test_df
 
     def _format_subject(self, subject: str) -> str:
         return " ".join(subject.split("_"))
 
-    def _format_example(
-        self,
-        df: pd.DataFrame,
-        idx: int,
-        option: Tuple[str, ...] = ("A", "B", "C", "D"),
-        include_answer: bool = True,
-    ) -> str:
-        """
-        Format a single example from the DataFrame into a prompt string.
-        """
-        prompt = df.iloc[idx, 0]
-        num_options = len(option)
-        option_indices = [choices.index(option) for option in option]
-
-        for j, option_index in enumerate(option_indices):
-            prompt += f"\n{choices[j]}. {df.iloc[idx, option_index + 1]}"
-
-        prompt += "\nAnswer:"
-        if include_answer:
-            prompt += f" {df.iloc[idx, num_options + 1]}\n\n"
-
-        return prompt
-
-    def _gen_prompt(self, train_df: pd.DataFrame, subject: str, k_shot: int) -> str:
-        prompt = f"The following are multiple choice questions (with answers) about {self._format_subject(subject)}.\n\n"
-        for i in range(k_shot):
-            prompt += self._format_example(train_df, i)
-        return prompt
-
-    def gen_batch_inputs(self, k_shot: int, max_options_lists: int = -1) -> None:
+    def gen_batch_inputs(
+        self, k_shot: int = 0, max_options_lists: int = -1, temperature: float = 0.0
+    ) -> None:
         if k_shot != 0:
-            raise NotImplementedError("k-shot learning is not supported yet for MMLU")
+            raise NotImplementedError("k-shot learning is not supported for MMLU")
 
         for subject in subjects:
-            dev_df, test_df = self._load_dataframes(subject)
-
+            _, test_df = self._load_dataframes(subject)
             input_data = []
             for i in range(test_df.shape[0]):
-
-                train_prompt = self._gen_prompt(dev_df, subject, k_shot)
-
-                original_options = ["A", "B", "C", "D"]
+                original_options = test_df[["A", "B", "C", "D"]].iloc[i].tolist()
                 options_lists = self._gen_experiment_options_lists(
                     original_options, max_options_lists
                 )
 
                 for options in options_lists:
-
+                    prompt = self._gen_prompt(str(test_df.iloc[i, 0]), options)
                     input_data.append(
                         self._gen_batch_input_line(
-                            f"{subject}_{question_id}_{options}", prompt
+                            f"{subject}_{i}_{options}",
+                            prompt,
+                            temperature=temperature,
+                            force_json=False,
                         )
                     )
 

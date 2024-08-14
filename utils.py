@@ -1,14 +1,11 @@
-# from dataset_handlers.mmlu_handler import MMLUHandler
 from dataset_handlers.custom_case_vignettes_handler import CustomCaseVignettesHandler
+from dataset_handlers.mmlu_handler import MMLUHandler
 from dataset_handlers.nejm_handler import NEJMHandler
 
 
 def get_dataset_handler(dataset_name: str, engine: str, experiment: str, ai_type: str):
-    """
-    Get the dataset handler for the specified dataset.
-    """
-    # if dataset_name == "mmlu":
-    #     return MMLUHandler(engine, experiment)
+    if dataset_name == "mmlu":
+        return MMLUHandler(engine, experiment, ai_type)
     if dataset_name == "nejm":
         return NEJMHandler(engine, experiment, ai_type)
     if dataset_name == "custom":

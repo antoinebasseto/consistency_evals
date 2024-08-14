@@ -95,7 +95,7 @@ class DatasetHandler:
         self,
         custom_id: str,
         prompt: str,
-        temperature: int = 0,
+        temperature: float = 0.0,
         force_json: bool = False,
         json_schema: Optional[object] = None,
     ) -> dict:
