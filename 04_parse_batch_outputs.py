@@ -14,7 +14,6 @@ def main(args: argparse.Namespace):
     )
     batch_outputs_dir = dataset_handler.get_batch_outputs_dir()
     parsed_outputs_dir = dataset_handler.get_parsed_batch_outputs_dir()
-
     for output_file_name in tqdm(os.listdir(batch_outputs_dir)):
         output_file_path = os.path.join(batch_outputs_dir, output_file_name)
         parsed_file_name = ""

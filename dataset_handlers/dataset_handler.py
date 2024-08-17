@@ -134,7 +134,7 @@ class DatasetHandler:
             },
         }
 
-    def _gen_prompt(self, question: str, options: Tuple[str, ...]) -> str:
+    def _gen_prompt(self, question: str, options: Tuple[str, ...] | List[str]) -> str:
         prompt = f"{self.MESSAGE_PROMPT_START[self.ai_type]}\n\n{question}\n\n"
         for i, option in enumerate(options):
             prompt += f"{string.ascii_uppercase[i]}. {option}\n"

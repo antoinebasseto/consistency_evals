@@ -128,6 +128,7 @@ Answer using a JSON format.
         results = []
 
         if self.ai_type == "recommendation":
+            json_answer["lead_diagnosis"] = re.sub(r"^[A-Z]\. ", '', json_answer["lead_diagnosis"])
             result = {
                 "options": options,
                 "answer": json_answer["lead_diagnosis"],
@@ -171,10 +172,8 @@ Answer using a JSON format.
             df,
             ast.literal_eval(df["options"].iloc[0]),
             "answer",
-            os.path.join(
-                self.get_results_dir(),
-                f"{results_file_name}_answer_distribution.png",
-            ),
+            self.get_results_dir(),
+            f"{results_file_name}_answer_distribution",
         )
 
     def _gen_results_for_hypothesis_driven(
@@ -191,10 +190,8 @@ Answer using a JSON format.
                     evidence,
                     "claim",
                     "answer_id",
-                    os.path.join(
-                        self.get_results_dir(),
-                        f"{results_file_name}_{option}_{evidence["evidence_type"].iloc[0]}.png",
-                    ),
+                    self.get_results_dir(),
+                    f"{results_file_name}_{option}_{evidence["evidence_type"].iloc[0]}",
                 )
 
     def _gen_json_schema_for_recommendation_driven(self) -> object:
