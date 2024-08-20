@@ -180,8 +180,10 @@ Answer the following multiple choice question. The last line of your response sh
 
     def gen_results(self) -> None:
         accuracies = self._calculate_accuracies()
+        subjects_statistics = self._calculate_subjects_statistics()
         self._plot_accuracy_distribution(accuracies)
-        self._generate_question_distribution_plots()
+        self._generate_question_distribution_plots(subjects_statistics)
+        self._print_statistics_results(accuracies, subjects_statistics)
 
     def _calculate_accuracies(self) -> pd.DataFrame:
         accuracies = {}
@@ -240,41 +242,48 @@ Answer the following multiple choice question. The last line of your response sh
             )
         )
 
-    def _generate_question_distribution_plots(self) -> None:
-        print("Generating question distribution plots...")
+    def _calculate_subjects_statistics(self) -> Dict[str, pd.DataFrame]:
+        results = {}
+        print("Calculating statistics...")
         for file_name in tqdm(os.listdir(self.get_parsed_batch_outputs_dir())):
-            _, df = self._load_parsed_batch_output(file_name)
-            grouped_df = self._calculate_subject_results_df(df)
-            self.plot_question_distribution(grouped_df, file_name)
+            subject, df = self._load_parsed_batch_output(file_name)
+            grouped_df = (
+                df.groupby(["question_id", "mapped_letter_answer"])
+                .size()
+                .reset_index(name="count")
+            )  # type: ignore
 
-    def _calculate_subject_results_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        grouped_df = (
-            df.groupby(["question_id", "mapped_letter_answer"])
-            .size()
-            .reset_index(name="count")
-        )  # type: ignore
+            grouped_df["entropy"] = grouped_df.groupby("question_id")[
+                "count"
+            ].transform(lambda x: entropy(x / x.sum(), base=2))
+            majority_answer_df = grouped_df.loc[
+                grouped_df.groupby("question_id")["count"].idxmax()
+            ]
+            grouped_df = grouped_df.merge(
+                majority_answer_df[["question_id", "mapped_letter_answer"]],
+                on="question_id",
+                suffixes=("", "_majority"),
+            )
+            grouped_df.rename(
+                columns={"mapped_letter_answer_majority": "majority_answer"},
+                inplace=True,
+            )
+            grouped_df_sorted = grouped_df.sort_values(
+                by=["entropy", "majority_answer", "question_id"]
+            ).reset_index(drop=True)
+            grouped_df_sorted["question_id"] = grouped_df_sorted["question_id"].astype(
+                str
+            )
+            results[subject] = grouped_df_sorted
+        return results
 
-        grouped_df["entropy"] = grouped_df.groupby("question_id")["count"].transform(
-            lambda x: entropy(x / x.sum(), base=2)
-        )
-        majority_answer_df = grouped_df.loc[
-            grouped_df.groupby("question_id")["count"].idxmax()
-        ]
-        grouped_df = grouped_df.merge(
-            majority_answer_df[["question_id", "mapped_letter_answer"]],
-            on="question_id",
-            suffixes=("", "_majority"),
-        )
-        grouped_df.rename(
-            columns={"mapped_letter_answer_majority": "majority_answer"}, inplace=True
-        )
-        grouped_df_sorted = grouped_df.sort_values(
-            by=["entropy", "majority_answer", "question_id"]
-        ).reset_index(drop=True)
-        grouped_df_sorted["question_id"] = grouped_df_sorted["question_id"].astype(str)
-        return grouped_df_sorted
+    def _generate_question_distribution_plots(
+        self, subjects_statistics: Dict[str, pd.DataFrame]
+    ) -> None:
+        for subject, grouped_df in subjects_statistics.items():
+            self._plot_question_distribution(grouped_df, f"{subject}.csv")
 
-    def plot_question_distribution(
+    def _plot_question_distribution(
         self, grouped_df: pd.DataFrame, file_name: str
     ) -> None:
         fig = px.bar(
@@ -298,69 +307,16 @@ Answer the following multiple choice question. The last line of your response sh
             )
         )
 
-    # def gen_results(self) -> None:
-    #     accuracies = {}
-    #     for file_name in tqdm(os.listdir(self.get_parsed_batch_outputs_dir())):
-    #         file_path = os.path.join(self.get_parsed_batch_outputs_dir(), file_name)
-    #         df = pd.read_csv(file_path)
-    #         subject = "_".join(file_name.split("_")[:-4])
-    #         accuracies[subject] = {}
-    #         for options in df["options"].unique():
-    #             accuracies[subject][options] = df[df["options"] == options].apply(lambda x: x["mapped_letter_answer"] == x["solution"], axis=1).mean()
-    #     accuracies = pd.DataFrame(accuracies)
-    #     sorted_accuracies = accuracies.loc[:, accuracies.loc["('A', 'B', 'C', 'D')"].sort_values().index]
-    #     fig = px.violin(
-    #         sorted_accuracies,
-    #         x=sorted_accuracies.columns,
-    #         points="all",
-    #         hover_name=sorted_accuracies.index,
-    #         title="Accuracy Distribution per Subject",
-    #         labels={"value": "Accuracy", "variable": "Subject"},
-    #     )
-    #     fig.add_trace(go.Scatter(
-    #         x=accuracies.loc["('A', 'B', 'C', 'D')"],
-    #         y=accuracies.columns,
-    #         mode='markers',
-    #         marker=dict(color='red', size=10, symbol='circle'),
-    #         name='No-Shuffling Accuracy'
-    #     ))
-    #     fig.show()
-    #     fig.write_html(os.path.join(self.get_results_dir(), f"accuracy_distribution.html"))
-
-    #     for file_name in tqdm(os.listdir(self.get_parsed_batch_outputs_dir())):
-    #         file_path = os.path.join(self.get_parsed_batch_outputs_dir(), file_name)
-    #         df = pd.read_csv(file_path)
-
-    #         grouped_df = (
-    #             df.groupby(["question_id", "mapped_letter_answer"])
-    #             .size()
-    #             .reset_index(name="count")
-    #         )  # type: ignore
-
-    #         grouped_df["entropy"] = grouped_df.groupby("question_id")["count"].transform(
-    #             lambda x: entropy(x / x.sum(), base=2)
-    #         )
-    #         majority_answer_df = grouped_df.loc[grouped_df.groupby('question_id')['count'].idxmax()]
-    #         grouped_df = grouped_df.merge(majority_answer_df[['question_id', 'mapped_letter_answer']], on='question_id', suffixes=('', '_majority'))
-    #         grouped_df.rename(columns={'mapped_letter_answer_majority': 'majority_answer'}, inplace=True)
-
-    #         grouped_df_sorted = grouped_df.sort_values(
-    #             by=["entropy", "majority_answer", "question_id"]
-    #         ).reset_index(drop=True)
-    #         grouped_df_sorted["question_id"] = grouped_df_sorted["question_id"].astype(str)
-
-    #         fig = px.bar(
-    #             grouped_df_sorted,
-    #             x="question_id",
-    #             y="count",
-    #             color="mapped_letter_answer",
-    #             title="Distribution of Answers per Question",
-    #             barmode="stack",
-    #             category_orders={"mapped_letter_answer": ["A", "B", "C", "D"],
-    #                              "question_id": grouped_df_sorted["question_id"].tolist()},
-    #             labels={"question_id": "Question ID", "count": "Count"},
-    #             text_auto=True,
-    #             color_discrete_sequence=px.colors.qualitative.T10,
-    #         )
-    #         # fig.show()
-    #         fig.write_html(os.path.join(self.get_results_dir(), f"{file_name.removesuffix(".csv")}.html"))
+    def _print_statistics_results(
+        self, accuracies: pd.DataFrame, subjects_statistics: Dict[str, pd.DataFrame]
+    ) -> None:
+        results = {}
+        for subject, grouped_df in subjects_statistics.items():
+            results[subject] = {
+                "original_accuracy": accuracies.loc["('A', 'B', 'C', 'D')", subject],
+                "mean_entropy": grouped_df["entropy"].mean(),
+            }
+        results = pd.DataFrame(results).T
+        results = results.sort_values(by="original_accuracy")
+        print(results)
+        print(f"Correlation between accuracy and entropy: {results.corr().iloc[0, 1]}")
