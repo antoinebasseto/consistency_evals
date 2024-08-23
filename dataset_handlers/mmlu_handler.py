@@ -223,7 +223,7 @@ Answer the following multiple choice question. The last line of your response sh
         return px.violin(
             sorted_accuracies,
             x=sorted_accuracies.columns,
-            points="all",
+            # points="all",
             hover_name=sorted_accuracies.index,
             title="Accuracy Distribution per Subject",
             labels={"value": "Accuracy", "variable": "Subject"},
@@ -316,7 +316,16 @@ Answer the following multiple choice question. The last line of your response sh
                 "original_accuracy": accuracies.loc["('A', 'B', 'C', 'D')", subject],
                 "mean_entropy": grouped_df["entropy"].mean(),
             }
+        for file_name in tqdm(os.listdir(self.get_parsed_batch_outputs_dir())):
+            subject, df = self._load_parsed_batch_output(file_name)
+            results[subject]["n_questions"] = df["question_id"].nunique()
         results = pd.DataFrame(results).T
         results = results.sort_values(by="original_accuracy")
         print(results)
+        print(
+            f"Mean weighted entropy: {sum(results['mean_entropy'] * results['n_questions']) / sum(results['n_questions'])}"
+        )
+        print(
+            f"Mean weighted accuracy: {sum(results['original_accuracy'] * results['n_questions']) / sum(results['n_questions'])}"
+        )
         print(f"Correlation between accuracy and entropy: {results.corr().iloc[0, 1]}")
