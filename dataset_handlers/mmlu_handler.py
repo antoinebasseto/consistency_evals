@@ -5,6 +5,7 @@ import re
 import string
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -149,6 +150,8 @@ Answer the following multiple choice question. The last line of your response sh
         raw_output = json.loads(line)
 
         split_custom_id = raw_output["custom_id"].split("_")
+        if bool(re.match(r"^\d+$", split_custom_id[-1])):
+            split_custom_id = split_custom_id[:-1]
         options = ast.literal_eval(split_custom_id[-1])
         question_id = int(split_custom_id[-2])
         subject = "_".join(split_custom_id[:-2])
@@ -158,11 +161,16 @@ Answer the following multiple choice question. The last line of your response sh
         raw_answer = raw_output["response"]["body"]["choices"][0]["message"]["content"]
         match = re.search(self.ANSWER_PATTERN_MULTICHOICE, raw_answer)
         letter_answer = match.group(1) if match else None
-        mapped_letter_answer = (
-            options[string.ascii_uppercase.index(letter_answer)]
-            if letter_answer
-            else None
-        )
+
+        mapped_letter_answer = None
+        if letter_answer is not None:
+            mapped_letter_index = string.ascii_uppercase.index(letter_answer)  # type: ignore
+            if mapped_letter_index < len(options):
+                mapped_letter_answer = (
+                    options[string.ascii_uppercase.index(letter_answer)]
+                    if letter_answer
+                    else None
+                )
 
         results = [
             {
@@ -179,11 +187,158 @@ Answer the following multiple choice question. The last line of your response sh
         return results
 
     def gen_results(self) -> None:
-        accuracies = self._calculate_accuracies()
-        subjects_statistics = self._calculate_subjects_statistics()
-        self._plot_accuracy_distribution(accuracies)
-        self._generate_question_distribution_plots(subjects_statistics)
-        self._print_statistics_results(accuracies, subjects_statistics)
+        if self.experiment == "withdrawing":
+            self._gen_results_withdrawing()
+
+        if self.experiment == "shuffling" or self.experiment == "control":
+            accuracies = self._calculate_accuracies()
+            subjects_statistics = self._calculate_subjects_statistics()
+
+            for file_name in tqdm(
+                os.listdir(
+                    os.path.join(
+                        self.get_parsed_batch_outputs_dir(), "..", "withdrawing"
+                    )
+                )
+            ):
+                _, df = self._load_parsed_batch_output(
+                    os.path.join("..", "withdrawing", file_name)
+                )
+                subject = "_".join(file_name.split("_")[:-4])
+                df = df[["question_id", "options", "mapped_letter_answer"]]
+                max_value_counts = df.groupby("question_id")[
+                    "mapped_letter_answer"
+                ].agg(lambda x: x.value_counts().max())
+
+                _, test_df = self._load_dataframes(subject)
+                test_df["withdrawing_max_value_counts"] = max_value_counts
+
+                print(test_df)
+
+                test_df.iloc[
+                    subjects_statistics[subject]["question_id"].drop_duplicates()
+                ].to_csv(
+                    os.path.join(
+                        self.get_results_dir(), "ordered_by_entropy", f"{subject}.csv"
+                    ),
+                )
+                # df_grouped = df.groupby(["question_id", "mapped_letter_answer"]).max()
+
+                # print(df_grouped)
+                # _, test_df = self._load_dataframes(df_subject)
+                # test_df.iloc[subjects_statistics[df_subject]["question_id"].drop_duplicates()]
+
+            self._plot_accuracy_distribution(accuracies)
+            self._generate_question_distribution_plots(subjects_statistics)
+            self._print_statistics_results(accuracies, subjects_statistics)
+
+    def _gen_results_withdrawing(self) -> None:
+        results = []
+        for file_name in tqdm(os.listdir(self.get_parsed_batch_outputs_dir())):
+            subject, df = self._load_parsed_batch_output(file_name)
+            df_filled = df[["question_id", "options", "mapped_letter_answer"]].fillna(
+                "E"
+            )
+            df_filled["mapped_letter_answer"] = df_filled["mapped_letter_answer"].map(
+                {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5}
+            )
+            df_pivot = df_filled.pivot(
+                columns="question_id", index="options", values="mapped_letter_answer"
+            )
+            sorted_columns = sorted(
+                df_pivot.columns,
+                key=lambda col: (
+                    df_pivot[col].value_counts().max(),
+                    df_pivot[col].nunique(),
+                    df_pivot[col].value_counts().idxmax(),
+                    df_pivot[col].value_counts().idxmin(),
+                ),
+                reverse=True,
+            )
+            df_sorted = df_pivot[sorted_columns]
+            fig = px.imshow(
+                df_sorted.to_numpy(),
+                x=list(map(str, sorted_columns)),
+                y=df_sorted.index,
+                color_continuous_scale=list(
+                    zip(
+                        np.linspace(0, 1, num=5),
+                        px.colors.qualitative.T10[:4] + ["white"],
+                    )
+                ),
+            )
+            fig.update_layout(
+                coloraxis_showscale=False,
+                width=1920,
+                height=1080,
+                xaxis=dict(
+                    showticklabels=False,
+                ),
+                xaxis_title="Question ID",
+                font=dict(size=10),
+            )
+            fig.write_html(os.path.join(self.get_results_dir(), f"{subject}.html"))
+
+            results.append(
+                {
+                    "subject": subject,
+                    "percentage_question_with_striclty_more_than_two_unique_answers": (
+                        (df_sorted.nunique(axis=0) > 2).sum() / df_sorted.shape[1]
+                    ),
+                    "percentage_question_where_no_answer_is_chosen_three_times": (
+                        (
+                            df_sorted.apply(lambda x: x.value_counts().max(), axis=0)
+                            < 3
+                        ).sum()
+                        / df_sorted.shape[1]
+                    ),
+                }
+            )
+        results = pd.DataFrame(results).sort_values(
+            by="percentage_question_where_no_answer_is_chosen_three_times"
+        )
+        print(results)
+        results.to_csv(
+            os.path.join(self.get_results_dir(), f"results_{self.experiment}.csv"),
+            index=False,
+        )
+
+        results_shuffling = pd.read_csv(
+            os.path.join(
+                self.get_results_dir(), "..", "shuffling", "results_shuffling.csv"
+            )
+        )
+
+        merged_results = results.merge(
+            results_shuffling,
+            on="subject",
+            suffixes=("_withdrawing", "_shuffling"),
+        )
+
+        print(merged_results)
+
+        print(
+            f"Mean weighted entropy: {sum(merged_results['mean_entropy'] * merged_results['n_questions']) / sum(merged_results['n_questions'])}"
+        )
+        print(
+            f"Mean weighted accuracy: {sum(merged_results['original_accuracy'] * merged_results['n_questions']) / sum(merged_results['n_questions'])}"
+        )
+        print(
+            f"Mean weighted percentage_question_with_striclty_more_than_two_unique_answers: {sum(merged_results['percentage_question_with_striclty_more_than_two_unique_answers'] * merged_results['n_questions']) / sum(merged_results['n_questions'])}"
+        )
+        print(
+            f"Mean weighted percentage_question_where_no_answer_is_chosen_three_times: {sum(merged_results['percentage_question_where_no_answer_is_chosen_three_times'] * merged_results['n_questions']) / sum(merged_results['n_questions'])}"
+        )
+        print(merged_results.drop("subject", axis=1).corr())
+
+        merged_results.to_csv(
+            os.path.join(self.get_results_dir(), "..", f"results_merged.csv"),
+            index=False,
+        )
+        merged_results.drop("subject", axis=1).corr().to_csv(
+            os.path.join(self.get_results_dir(), "..", f"correlation.csv"),
+            index=False,
+        )
 
     def _calculate_accuracies(self) -> pd.DataFrame:
         accuracies = {}
@@ -213,8 +368,8 @@ Answer the following multiple choice question. The last line of your response sh
     def _plot_accuracy_distribution(self, accuracies: pd.DataFrame) -> None:
         sorted_accuracies = accuracies.loc[:, accuracies.loc["('A', 'B', 'C', 'D')"].sort_values().index]  # type: ignore
         fig = self._create_violin_plot(sorted_accuracies)
-        self._add_no_shuffling_accuracy_trace(fig, accuracies)
-        fig.show()
+        if self.experiment == "shuffling":
+            self._add_no_shuffling_accuracy_trace(fig, accuracies)
         fig.write_html(
             os.path.join(self.get_results_dir(), "accuracy_distribution.html")
         )
@@ -225,7 +380,7 @@ Answer the following multiple choice question. The last line of your response sh
             x=sorted_accuracies.columns,
             # points="all",
             hover_name=sorted_accuracies.index,
-            title="Accuracy Distribution per Subject",
+            # title="Accuracy Distribution per Subject",
             labels={"value": "Accuracy", "variable": "Subject"},
         )
 
@@ -241,6 +396,8 @@ Answer the following multiple choice question. The last line of your response sh
                 name="No-Shuffling Accuracy",
             )
         )
+        fig.update_layout(showlegend=False)
+        fig.update_layout(height=1400, yaxis=dict(tickfont=dict(size=12)))
 
     def _calculate_subjects_statistics(self) -> Dict[str, pd.DataFrame]:
         results = {}
@@ -291,16 +448,18 @@ Answer the following multiple choice question. The last line of your response sh
             x="question_id",
             y="count",
             color="mapped_letter_answer",
-            title="Distribution of Answers per Question",
+            # title="Distribution of Answers per Question",
             barmode="stack",
             category_orders={
                 "mapped_letter_answer": ["A", "B", "C", "D"],
                 "question_id": grouped_df["question_id"].tolist(),
             },
             labels={"question_id": "Question ID", "count": "Count"},
-            text_auto=True,
+            # text_auto=True,
             color_discrete_sequence=px.colors.qualitative.T10,
         )
+        fig.update_layout(showlegend=False)
+        fig.update_layout(xaxis=dict(showticklabels=False))
         fig.write_html(
             os.path.join(
                 self.get_results_dir(), f"{file_name.removesuffix('.csv')}.html"
@@ -322,6 +481,10 @@ Answer the following multiple choice question. The last line of your response sh
         results = pd.DataFrame(results).T
         results = results.sort_values(by="original_accuracy")
         print(results)
+        results.to_csv(
+            os.path.join(self.get_results_dir(), f"results_{self.experiment}.csv"),
+            index_label="subject",
+        )
         print(
             f"Mean weighted entropy: {sum(results['mean_entropy'] * results['n_questions']) / sum(results['n_questions'])}"
         )
