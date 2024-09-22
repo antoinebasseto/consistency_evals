@@ -8,7 +8,6 @@ from typing import List, Optional, Tuple
 class DatasetHandler:
     SYSTEM_PROMPT = {}
     MESSAGE_PROMPT_START = {}
-    ANSWER_PATTERN_MULTICHOICE = r"(?i)Answer\s*:\s*([A-Z])"
 
     def __init__(
         self, dataset_name: str, engine: str, experiment: str, ai_type: str
