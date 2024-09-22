@@ -2,14 +2,35 @@ import ast
 import json
 import os
 import re
-from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
 import pandas as pd
+import plotly.express as px
+from InstructorEmbedding import INSTRUCTOR
+from scipy.stats import entropy
+from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
 from dataset_handlers.dataset_handler import DatasetHandler
-from plots import plot_answer_distribution, plot_text_clusters
+
+
+def insert_br_at_whitespace(text, n):
+    result = []
+    start = 0
+    while start < len(text):
+        # Look for the nearest whitespace before the nth character
+        end = start + n
+        if end < len(text) and text[end] != " ":
+            # If no whitespace is found, move the end to the nearest space before the nth character
+            end = text.rfind(" ", start, end)
+            if end == -1:
+                end = start + n  # No space found, so split at nth character
+        result.append(
+            text[start:end].strip()
+        )  # Add the chunk, stripping any leading/trailing whitespace
+        start = end + 1  # Move to the next chunk, skipping the space
+    return "<br>".join(result)
 
 
 class NEJMHandler(DatasetHandler):
@@ -82,6 +103,8 @@ Answer using a JSON format.
         for file_name in tqdm(os.listdir(self.get_raw_data_dir())):
             batch_inputs = []
             file_path = os.path.join(self.get_raw_data_dir(), file_name)
+            if os.path.isdir(file_path):
+                continue
             with open(file_path, "r") as file:
                 case_data = json.load(file)
                 case_name = file_name.removesuffix(".json")
@@ -128,7 +151,9 @@ Answer using a JSON format.
         results = []
 
         if self.ai_type == "recommendation":
-            json_answer["lead_diagnosis"] = re.sub(r"^[A-Z]\. ", '', json_answer["lead_diagnosis"])
+            json_answer["lead_diagnosis"] = re.sub(
+                r"^[A-Z]\. ", "", json_answer["lead_diagnosis"]
+            )
             result = {
                 "options": options,
                 "answer": json_answer["lead_diagnosis"],
@@ -153,7 +178,7 @@ Answer using a JSON format.
         return results
 
     def gen_results(self) -> None:
-        for file_name in tqdm(os.listdir(self.get_parsed_batch_outputs_dir())):
+        for file_name in os.listdir(self.get_parsed_batch_outputs_dir()):
             file_path = os.path.join(self.get_parsed_batch_outputs_dir(), file_name)
             df = pd.read_csv(file_path)
 
@@ -168,31 +193,249 @@ Answer using a JSON format.
     ) -> None:
         results_file_name = file_name.removesuffix(".csv")
 
-        plot_answer_distribution(
+        answer_frequencies = df["answer"].value_counts()
+        answer_entropy = entropy(answer_frequencies)
+        tqdm.write(f"Entropy for {results_file_name}: {answer_entropy}")
+
+        df["answer"] = df["answer"].apply(lambda x: insert_br_at_whitespace(x, 40))
+        fig = px.histogram(
             df,
-            ast.literal_eval(df["options"].iloc[0]),
-            "answer",
-            self.get_results_dir(),
-            f"{results_file_name}_answer_distribution",
+            x="answer",
+            category_orders={
+                "answer": list(
+                    map(
+                        lambda x: insert_br_at_whitespace(x, 40),
+                        ast.literal_eval(df["options"].iloc[0]),
+                    )
+                )
+            },
+        )
+        fig.write_html(
+            os.path.join(
+                self.get_results_dir(), f"{results_file_name}_answer_distribution.html"
+            )
         )
 
     def _gen_results_for_hypothesis_driven(
         self, df: pd.DataFrame, file_name: str
     ) -> None:
         df["answer_id"] = df["options"].factorize()[0].astype(str)
-        results_file_name = file_name.removesuffix(".csv")
+        case_name = "_".join(file_name.split("_")[:2])
+        with open(
+            os.path.join(self.get_raw_data_dir(), "gold_evidence", f"{case_name}.json")
+        ) as file:
+            gold = json.load(file)
 
-        for option in df['option'].unique():
-            evidence_for = df[(df["option"] == option) & (df["evidence_type"] == "evidence_for")].copy()
-            evidence_against = df[(df["option"] == option) & (df["evidence_type"] == "evidence_against")].copy()
-            for evidence in [evidence_for, evidence_against]:
-                plot_text_clusters(
-                    evidence,
-                    "claim",
-                    "answer_id",
+        if not os.path.exists(
+            os.path.join(
+                self.get_results_dir(),
+                "evidence_matching",
+                f"{case_name}_evidence_matching_full.csv",
+            )
+        ):
+            df["matched_gold"] = self._match_evidence(df, gold)
+            df.to_csv(
+                os.path.join(
                     self.get_results_dir(),
-                    f"{results_file_name}_{option}_{evidence["evidence_type"].iloc[0]}",
+                    "evidence_matching",
+                    f"{case_name}_evidence_matching_full.csv",
+                ),
+                index=False,
+            )
+        df = pd.read_csv(
+            os.path.join(
+                self.get_results_dir(),
+                "evidence_matching",
+                f"{case_name}_evidence_matching_full.csv",
+            )
+        )
+        df["matched_gold"] = df["matched_gold"].apply(ast.literal_eval)
+
+        for option in df["option"].unique():
+            for evidence_type in ["evidence_for", "evidence_against"]:
+                df_exploded = df[
+                    (df["option"] == option) & (df["evidence_type"] == evidence_type)
+                ].explode("matched_gold")
+
+                df_exploded["matched_gold"] = df_exploded["matched_gold"].fillna(
+                    "other"
                 )
+                counts = (
+                    df_exploded.groupby(["claim", "matched_gold"]).size().reset_index()
+                )
+                counts.columns = ["claim", "matched_gold", "count"]
+                counts_sorted = counts.sort_values(by="count", ascending=False)
+
+                counts_sorted["matched_gold"] = counts_sorted["matched_gold"].apply(
+                    lambda x: insert_br_at_whitespace(x, 50)
+                )
+
+                fig = px.bar(
+                    counts_sorted,
+                    x="matched_gold",
+                    y="count",
+                    hover_data={"claim": True},
+                    labels={
+                        "matched_gold": "Matched Gold",
+                        "count": "Number of Claims",
+                    },
+                    title=f"{case_name} | {option} | {evidence_type}",
+                )
+                fig.update_layout(xaxis={"categoryorder": "total descending"})
+                fig.write_html(
+                    os.path.join(
+                        self.get_results_dir(),
+                        f"{case_name}_{option}_{evidence_type}_matched_gold_distribution.html",
+                    )
+                )
+
+        df_exploded = df.explode("matched_gold")
+        df_exploded["matched_gold"] = df_exploded["matched_gold"].fillna("other")
+        counts = (
+            df_exploded.groupby(["option", "evidence_type", "claim", "matched_gold"])
+            .size()
+            .reset_index()
+        )
+        counts.columns = ["option", "evidence_type", "claim", "matched_gold", "count"]
+        counts_sorted = counts.sort_values(by="count", ascending=False)
+        counts_sorted["matched_gold"] = counts_sorted["matched_gold"].apply(
+            lambda x: insert_br_at_whitespace(x, 50)
+        )
+        counts_sorted["has_matched_gold"] = counts_sorted["matched_gold"] != "other"
+        fig = px.bar(
+            counts_sorted,
+            x="evidence_type",
+            y="count",
+            facet_col="option",
+            color="has_matched_gold",
+            hover_data={"claim": True, "matched_gold": True},
+            labels={"count": "Number of Claims"},
+            category_orders={
+                "evidence_type": ["evidence_for", "evidence_against"],
+                "has_matched_gold": [True, False],
+            },
+        )
+        fig.update_layout(
+            showlegend=False,
+            width=3840 * 1.5,
+            height=1080 * 1.5,
+            font=dict(size=36 * 1.5),
+            margin=dict(t=240 * 1.5),
+        )
+        fig.update_xaxes(title=None, tickangle=0, tickfont=dict(size=32 * 1.5))
+        fig.for_each_annotation(
+            lambda a: a.update(text=insert_br_at_whitespace(a.text.split("=")[-1], 25))
+        )
+        fig.show()
+
+        results = []
+        for option in df["option"].unique():
+            for evidence_type in ["evidence_for", "evidence_against"]:
+                results.append(
+                    {
+                        "option": option,
+                        "evidence_type": evidence_type,
+                        "precision": self._calc_precision(df, option, evidence_type),
+                        "recall": self._calc_recall(df, gold, option, evidence_type),
+                    }
+                )
+
+        results = pd.DataFrame(results)
+        print(results)
+        print(f"Average precision: {results['precision'].mean()}")
+        print(f"Average recall: {results['recall'].mean()}")
+        print(f"Case: {case_name}")
+        print("*" * 100)
+
+    def _calc_precision(
+        self,
+        df: pd.DataFrame,
+        option: str,
+        evidence_type: str,
+    ) -> float:
+        df_option_type = df[
+            (df["option"] == option) & (df["evidence_type"] == evidence_type)
+        ]
+        true_positives = (
+            df_option_type["matched_gold"].apply(lambda x: len(x) > 0).sum()
+        )
+        false_positives = (
+            df_option_type["matched_gold"].apply(lambda x: len(x) == 0).sum()
+        )
+
+        return true_positives / (true_positives + false_positives)
+
+    def _calc_recall(
+        self,
+        df: pd.DataFrame,
+        gold: Dict[str, Dict[str, List[str]]],
+        option: str,
+        evidence_type: str,
+    ) -> float:
+        gold_option_type = gold[option][evidence_type]
+        max_true_positives = len(gold_option_type) * len(df["options"].unique())
+        df_option_type = df[
+            (df["option"] == option) & (df["evidence_type"] == evidence_type)
+        ]
+        true_positives = df_option_type["matched_gold"].apply(lambda x: len(x)).sum()
+        return true_positives / max_true_positives
+
+    def _match_evidence(
+        self, df: pd.DataFrame, gold: Dict[str, Dict[str, List[str]]]
+    ) -> pd.Series:
+        # model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        # model = SentenceTransformer(
+        #     "Alibaba-NLP/gte-large-en-v1.5", trust_remote_code=True
+        # )
+        # model = SentenceTransformer(
+        #     "mixedbread-ai/mxbai-embed-large-v1", truncate_dim=512
+        # )
+        # model = SentenceTransformer(
+        #     "nomic-ai/nomic-embed-text-v1", trust_remote_code=True
+        # )
+        model = INSTRUCTOR("hkunlp/instructor-large")
+
+        corpus = df["claim"].tolist()
+        corpus = [["Represent the Medicine sentence: ", claim] for claim in corpus]
+        df["embedding"] = list(model.encode(corpus, show_progress_bar=True))  # type: ignore
+
+        gold_embeddings = {}
+        for option in gold.keys():
+            gold_embeddings[option] = {}
+            for evidence_type in gold[option].keys():
+                gold_embeddings[option][evidence_type] = {}
+                gold_evidence = gold[option][evidence_type]
+                for evidence in gold_evidence:
+                    gold_embeddings[option][evidence_type][evidence] = model.encode(
+                        [["Represent the Medicine sentence: ", evidence]],  # type: ignore
+                        show_progress_bar=True,
+                    )
+
+        matches = []
+
+        for _, row in df.iterrows():
+            option = row["option"]
+            evidence_type = row["evidence_type"]
+            gold_evidence_option_type = list(
+                gold_embeddings[option][evidence_type].keys()
+            )
+            gold_embeddings_option_type = list(
+                gold_embeddings[option][evidence_type].values()
+            )
+
+            similarities = cosine_similarity(
+                np.asarray(row["embedding"]).reshape(1, -1),
+                np.squeeze(gold_embeddings_option_type, axis=1),  # type: ignore
+            )[0]
+
+            good_matches = np.array([])
+            index_matches = np.asarray(similarities > 0.9).nonzero()[0]
+            if index_matches.size != 0:
+                good_matches = np.array(gold_evidence_option_type)[index_matches]
+
+            matches.append(good_matches)
+
+        return pd.Series(matches)
 
     def _gen_json_schema_for_recommendation_driven(self) -> object:
         return {
